@@ -1,0 +1,7 @@
+.env
+.env.*
+career_coach_chroma_db/
+__pycache__/
+*.pyc
+venv/
+.venv/
