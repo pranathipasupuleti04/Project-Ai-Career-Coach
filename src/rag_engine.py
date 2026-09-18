@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import shutil
+import streamlit as st
 from pathlib import Path
 from typing import List, Tuple
 
@@ -16,90 +16,184 @@ from langchain_chroma import Chroma
 
 load_dotenv()
 
-DB_DIR = "career_coach_chroma_db"
-
 
 def get_llm(model: str = "openai/gpt-oss-20b", temperature: float = 0.2):
     api_key = os.getenv("GROQ_API_KEY")
+
+    # Streamlit Cloud Secrets
     if not api_key:
-        raise ValueError("GROQ_API_KEY not found. Create a .env file and add your Groq API key.")
-    return ChatGroq(model=model, temperature=temperature)
+        try:
+            api_key = st.secrets["GROQ_API_KEY"]
+        except Exception:
+            pass
+
+    if not api_key:
+        raise ValueError(
+            "GROQ_API_KEY not found. Add it to .env locally "
+            "or Streamlit Cloud Secrets when deployed."
+        )
+
+    return ChatGroq(
+        model=model,
+        temperature=temperature,
+        api_key=api_key
+    )
 
 
+@st.cache_resource
 def get_embeddings():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
 
 # -----------------------------
 # Stage 1: Load Documents
 # -----------------------------
-def load_text_file(file_path: str, source_name: str, doc_type: str) -> List[Document]:
+def load_text_file(
+    file_path: str,
+    source_name: str,
+    doc_type: str
+) -> List[Document]:
+
     path = Path(file_path)
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    return [Document(page_content=text, metadata={"source": source_name, "doc_type": doc_type})]
 
+    text = path.read_text(
+        encoding="utf-8",
+        errors="ignore"
+    )
 
-def create_documents(resume_text: str, jd_text: str) -> List[Document]:
     return [
-        Document(page_content=resume_text, metadata={"source": "uploaded_resume", "doc_type": "resume"}),
-        Document(page_content=jd_text, metadata={"source": "uploaded_job_description", "doc_type": "job_description"}),
+        Document(
+            page_content=text,
+            metadata={
+                "source": source_name,
+                "doc_type": doc_type
+            }
+        )
+    ]
+
+
+def create_documents(
+    resume_text: str,
+    jd_text: str
+) -> List[Document]:
+
+    return [
+        Document(
+            page_content=resume_text,
+            metadata={
+                "source": "uploaded_resume",
+                "doc_type": "resume"
+            }
+        ),
+        Document(
+            page_content=jd_text,
+            metadata={
+                "source": "uploaded_job_description",
+                "doc_type": "job_description"
+            }
+        ),
     ]
 
 
 # -----------------------------
 # Stage 2: Split Documents
 # -----------------------------
-def split_documents(docs: List[Document], chunk_size: int = 800, chunk_overlap: int = 150) -> List[Document]:
+def split_documents(
+    docs: List[Document],
+    chunk_size: int = 800,
+    chunk_overlap: int = 150
+) -> List[Document]:
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ".", " ", ""],
+        separators=[
+            "\n\n",
+            "\n",
+            ".",
+            " ",
+            ""
+        ],
     )
+
     return splitter.split_documents(docs)
 
 
 # -----------------------------
-# Stage 3 + 4: Embeddings + Vector DB
+# Stage 3 + 4:
+# Embeddings + Vector DB
 # -----------------------------
-def build_vectorstore(chunks: List[Document], persist_directory: str = DB_DIR):
-    if Path(persist_directory).exists():
-        shutil.rmtree(persist_directory)
+def build_vectorstore(chunks: List[Document]):
 
     vectorstore = Chroma.from_documents(
         documents=chunks,
         embedding=get_embeddings(),
-        persist_directory=persist_directory,
         collection_name="career_coach_rag",
     )
+
     return vectorstore
 
 
 # -----------------------------
 # Stage 5: Retrieve Context
 # -----------------------------
-def retrieve_context(vectorstore, query: str, k: int = 5) -> Tuple[str, List[Document]]:
-    retriever = vectorstore.as_retriever(search_kwargs={"k": k})
+def retrieve_context(
+    vectorstore,
+    query: str,
+    k: int = 5
+) -> Tuple[str, List[Document]]:
+
+    retriever = vectorstore.as_retriever(
+        search_kwargs={"k": k}
+    )
+
     docs = retriever.invoke(query)
-    context = "\n\n".join([f"SOURCE: {d.metadata}\nCONTENT:\n{d.page_content}" for d in docs])
+
+    context = "\n\n".join(
+        [
+            f"SOURCE: {d.metadata}\nCONTENT:\n{d.page_content}"
+            for d in docs
+        ]
+    )
+
     return context, docs
 
 
 # -----------------------------
 # Stage 6: Generate Answer
 # -----------------------------
-def run_career_coach(vectorstore, resume_text: str, jd_text: str, question: str):
+def run_career_coach(
+    vectorstore,
+    resume_text: str,
+    jd_text: str,
+    question: str
+):
+
     llm = get_llm()
 
     retrieval_query = f"""
-    Resume content and job description content relevant to this career coaching question:
+    Resume content and job description content relevant
+    to this career coaching question:
+
     {question}
     """
 
-    context, source_docs = retrieve_context(vectorstore, retrieval_query, k=6)
+    context, source_docs = retrieve_context(
+        vectorstore,
+        retrieval_query,
+        k=6
+    )
 
-    prompt = ChatPromptTemplate.from_template("""
-You are an expert AI Career Coach for students, freshers and working professionals.
-Use ONLY the given context from the resume and job description.
+    prompt = ChatPromptTemplate.from_template(
+        """
+You are an expert AI Career Coach for students,
+freshers and working professionals.
+
+Use ONLY the given context from the resume and
+job description.
+
 Do not invent skills, experience or job requirements.
 
 CONTEXT:
@@ -108,7 +202,9 @@ CONTEXT:
 USER QUESTION:
 {question}
 
-Give a clear, practical answer with these sections when relevant:
+Give a clear, practical answer with these sections
+when relevant:
+
 1. Current Match Summary
 2. Strengths
 3. Missing Skills / Gaps
@@ -117,16 +213,42 @@ Give a clear, practical answer with these sections when relevant:
 6. Interview Preparation Tips
 
 Keep the answer simple, actionable and beginner-friendly.
-""")
+"""
+    )
 
     chain = prompt | llm | StrOutputParser()
-    answer = chain.invoke({"context": context, "question": question})
+
+    answer = chain.invoke(
+        {
+            "context": context,
+            "question": question
+        }
+    )
+
     return answer, source_docs
 
 
-def generate_complete_report(vectorstore, resume_text: str, jd_text: str):
+def generate_complete_report(
+    vectorstore,
+    resume_text: str,
+    jd_text: str
+):
+
     question = """
-    Analyze this resume against this job description. Provide ATS-style score, skill match, missing skills,
-    resume improvement suggestions, project suggestions, and interview questions.
+    Analyze this resume against this job description.
+
+    Provide:
+    - ATS-style score
+    - Skill match
+    - Missing skills
+    - Resume improvement suggestions
+    - Project suggestions
+    - Interview questions
     """
-    return run_career_coach(vectorstore, resume_text, jd_text, question)
+
+    return run_career_coach(
+        vectorstore,
+        resume_text,
+        jd_text,
+        question
+    )
