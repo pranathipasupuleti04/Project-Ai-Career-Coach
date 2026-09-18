@@ -14,6 +14,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
+
 load_dotenv()
 
 
@@ -127,11 +128,13 @@ def split_documents(
 # -----------------------------
 def build_vectorstore(chunks: List[Document]):
 
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=get_embeddings(),
+    vectorstore = Chroma(
         collection_name="career_coach_rag",
+        embedding_function=get_embeddings(),
+        persist_directory="/tmp/career_coach_chroma_db",
     )
+
+    vectorstore.add_documents(chunks)
 
     return vectorstore
 
